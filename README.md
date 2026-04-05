@@ -2,7 +2,7 @@
 
 Hardware Information and Monitor Tool for Linux
 
-**Version: v0.1.0**
+**Version: v0.1.1**
 
 Linux-only desktop app with an **Info** tab (static hardware identification, CPU-Z–style) and a **Monitor** tab (live sensors and usage, HWMonitor–style).
 
@@ -33,6 +33,16 @@ lhwmonitor
 python -m lhwmonitor
 ```
 
+### Running with `sudo` (DMI and PATH)
+
+Motherboard/BIOS details from **dmidecode** usually require root. If you run `sudo lhwmonitor` and see **command not found**, `sudo` resets `PATH` and no longer sees a venv or `~/.local/bin` install. Use either:
+
+```bash
+sudo env PATH="$PATH" lhwmonitor
+# or
+sudo "$(command -v lhwmonitor)"
+```
+
 ## GitHub
 
 Create a new repository on GitHub, then:
@@ -52,4 +62,4 @@ On the GitHub repo page, under **About → Topics**, you can add tags for discov
 
 ## License
 
-Add a `LICENSE` file of your choice when you publish the repo.
+Licensed under the [MIT License](LICENSE).
