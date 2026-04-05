@@ -9,7 +9,6 @@ from PySide6.QtCore import QRunnable, QThreadPool, QTimer, Qt, Signal, QObject
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -21,6 +20,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -51,6 +51,41 @@ class _MonitorRunnable(QRunnable):
             self._bridge.result.emit({"error": str(e)})
 
 
+class _CollapsibleSection(QWidget):
+    """Section with + / − toggle to show or hide body content."""
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._body = QWidget()
+        self._body_layout = QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(8, 0, 0, 0)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        header = QHBoxLayout()
+        self._btn = QToolButton()
+        self._btn.setText("−")
+        self._btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._btn.setCheckable(True)
+        self._btn.setChecked(True)
+        self._btn.setFixedWidth(28)
+        self._btn.setToolTip("Click to expand or hide this section")
+        title_lbl = QLabel(f"<b>{title}</b>")
+        header.addWidget(self._btn)
+        header.addWidget(title_lbl)
+        header.addStretch()
+        outer.addLayout(header)
+        outer.addWidget(self._body)
+        self._btn.toggled.connect(self._on_toggled)
+
+    def _on_toggled(self, expanded: bool) -> None:
+        self._body.setVisible(expanded)
+        self._btn.setText("−" if expanded else "+")
+
+    def body_layout(self) -> QVBoxLayout:
+        return self._body_layout
+
+
 def _flatten_info(obj: Any, prefix: str = "") -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
     if isinstance(obj, dict):
@@ -77,7 +112,7 @@ class MainWindow(QMainWindow):
         self._pool = QThreadPool.globalInstance()
 
         self._info_root: QWidget | None = None
-        self._monitor_table: QTableWidget | None = None
+        self._monitor_tables: dict[str, QTableWidget] = {}
         self._monitor_note: QLabel | None = None
         self._paused = False
 
@@ -141,8 +176,9 @@ class MainWindow(QMainWindow):
             ("System (DMI)", "dmi"),
             ("Graphics", "graphics"),
         ):
-            box = QGroupBox(title)
-            form = QFormLayout()
+            sec = _CollapsibleSection(title)
+            inner = QWidget()
+            form = QFormLayout(inner)
             section = bundle.get(key, {})
             pairs = _flatten_info(section)
             if not pairs:
@@ -152,8 +188,8 @@ class MainWindow(QMainWindow):
                     form.addRow(label, QLabel(value))
                 if len(pairs) > 200:
                     form.addRow(QLabel(f"... and {len(pairs) - 200} more rows omitted"))
-            box.setLayout(form)
-            root_layout.addWidget(box)
+            sec.body_layout().addWidget(inner)
+            root_layout.addWidget(sec)
         root_layout.addStretch()
 
     def _make_monitor_tab(self) -> QWidget:
@@ -180,10 +216,25 @@ class MainWindow(QMainWindow):
         self._monitor_note.setWordWrap(True)
         layout.addWidget(self._monitor_note)
 
-        self._monitor_table = QTableWidget(0, 3)
-        self._monitor_table.setHorizontalHeaderLabels(["Category", "Item", "Value"])
-        self._monitor_table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self._monitor_table)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(0, 0, 0, 0)
+
+        for cat in ("Load", "CPU", "Thermal", "Sensors", "Frequency"):
+            sec = _CollapsibleSection(cat)
+            table = QTableWidget(0, 2)
+            table.setHorizontalHeaderLabels(["Item", "Value"])
+            table.horizontalHeader().setStretchLastSection(True)
+            table.setMinimumHeight(80)
+            sec.body_layout().addWidget(table)
+            vbox.addWidget(sec)
+            self._monitor_tables[cat] = table
+
+        vbox.addStretch()
+        scroll.setWidget(container)
+        layout.addWidget(scroll)
         return w
 
     def _on_pause(self, checked: bool) -> None:
@@ -209,32 +260,35 @@ class MainWindow(QMainWindow):
         if "error" in data:
             if self._monitor_note:
                 self._monitor_note.setText(data["error"])
+            for t in self._monitor_tables.values():
+                t.setRowCount(0)
             return
         if self._monitor_note:
             note = data.get("sensors_note") or ""
             self._monitor_note.setText(note)
-        self._fill_monitor_table(data)
+        self._fill_monitor_tables(data)
 
-    def _fill_monitor_table(self, data: dict[str, Any]) -> None:
-        table = self._monitor_table
-        if table is None:
-            return
-        rows: list[tuple[str, str, str]] = []
+    def _fill_monitor_tables(self, data: dict[str, Any]) -> None:
+        load_rows: list[tuple[str, str]] = []
+        cpu_rows: list[tuple[str, str]] = []
+        thermal_rows: list[tuple[str, str]] = []
+        sensor_rows: list[tuple[str, str]] = []
+        freq_rows: list[tuple[str, str]] = []
 
         la = data.get("loadavg") or ""
         if la:
             parts = la.split()
             if len(parts) >= 3:
-                rows.append(("Load", "1 min", parts[0]))
-                rows.append(("Load", "5 min", parts[1]))
-                rows.append(("Load", "15 min", parts[2]))
+                load_rows.append(("1 min", parts[0]))
+                load_rows.append(("5 min", parts[1]))
+                load_rows.append(("15 min", parts[2]))
 
         usage = data.get("cpu_usage")
         if usage is None:
-            rows.append(("CPU", "usage %", "(calibrating…)"))
+            cpu_rows.append(("usage %", "(calibrating…)"))
         else:
             for name in sorted(usage.keys(), key=lambda x: (x != "cpu", x)):
-                rows.append(("CPU", name, f"{usage[name]:.1f}"))
+                cpu_rows.append((name, f"{usage[name]:.1f}"))
 
         for z in data.get("thermal_zones") or []:
             zm = z.get("temp_millideg", "")
@@ -242,29 +296,34 @@ class MainWindow(QMainWindow):
             temp = ""
             if zm.isdigit():
                 temp = f"{int(zm) / 1000.0:.1f} °C"
-            rows.append(("Thermal", label or z.get("zone", ""), temp or zm))
+            thermal_rows.append((label or z.get("zone", ""), temp or zm))
 
         for s in data.get("sensors") or []:
             chip = s.get("chip", "")
             lab = s.get("label", "")
             val = s.get("value", "")
             unit = s.get("unit", "")
-            item = f"{lab}"
             v = val + (f" {unit}" if unit else "")
-            rows.append(("Sensors", f"{chip} — {item}", v))
+            sensor_rows.append((f"{chip} — {lab}", v))
 
         for f in data.get("cpufreq") or []:
             cpu = f.get("cpu", "")
             mhz = f.get("mhz", "")
             gov = f.get("governor", "")
             extra = f" ({gov})" if gov else ""
-            rows.append(("Frequency", cpu, (mhz + " MHz" if mhz else "") + extra))
+            freq_rows.append((cpu, (mhz + " MHz" if mhz else "") + extra))
 
-        table.setRowCount(len(rows))
-        for i, (c, it, v) in enumerate(rows):
-            table.setItem(i, 0, QTableWidgetItem(c))
-            table.setItem(i, 1, QTableWidgetItem(it))
-            table.setItem(i, 2, QTableWidgetItem(v))
+        def _fill(table: QTableWidget, rows: list[tuple[str, str]]) -> None:
+            table.setRowCount(len(rows))
+            for i, (a, b) in enumerate(rows):
+                table.setItem(i, 0, QTableWidgetItem(a))
+                table.setItem(i, 1, QTableWidgetItem(b))
+
+        _fill(self._monitor_tables["Load"], load_rows)
+        _fill(self._monitor_tables["CPU"], cpu_rows)
+        _fill(self._monitor_tables["Thermal"], thermal_rows)
+        _fill(self._monitor_tables["Sensors"], sensor_rows)
+        _fill(self._monitor_tables["Frequency"], freq_rows)
 
     def closeEvent(self, event) -> None:
         self._timer.stop()
