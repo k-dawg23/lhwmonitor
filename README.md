@@ -62,4 +62,4 @@ On the GitHub repo page, under **About → Topics**, you can add tags for discov
 
 ## License
 
-Add a `LICENSE` file of your choice when you publish the repo.
+Licensed under the [MIT License](LICENSE).
