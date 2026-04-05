@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from lhwmonitor.data.cpufreq import read_cpu_mhz
+from lhwmonitor.data.gpu_mem import collect_gpu_memory_for_monitor
+from lhwmonitor.data.memory import collect_system_ram_snapshot
 from lhwmonitor.data.proc_stat import CpuUsageSampler
 from lhwmonitor.data.sensors_live import collect_sensors_rows
 from lhwmonitor.data.thermal import read_thermal_zones
@@ -37,4 +39,6 @@ def collect_monitor_snapshot(sampler: CpuUsageSampler) -> dict[str, Any]:
         "sensors_note": snote,
         "thermal_zones": zones,
         "cpufreq": freqs,
+        "ram": collect_system_ram_snapshot(),
+        "gpu_memory": collect_gpu_memory_for_monitor(),
     }

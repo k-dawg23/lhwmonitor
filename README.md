@@ -2,9 +2,9 @@
 
 Hardware Information and Monitor Tool for Linux
 
-**Version: v0.2.0**
+**Version: v0.2.1**
 
-Linux-only desktop app with an **Info** tab (static hardware identification, CPU-Z–style) and a **Monitor** tab (live sensors and usage, HWMonitor–style). The Monitor tab includes **rolling line charts** (Qt Charts) for load, CPU usage, temperatures, selected sensor temperatures, and CPU frequency, alongside the existing tables.
+Linux-only desktop app with an **Info** tab (static hardware identification, CPU-Z–style) and a **Monitor** tab (live sensors and usage, HWMonitor–style). The Monitor tab includes **rolling line charts** (Qt Charts) for load, system/GPU memory use, CPU usage, temperatures, selected sensor temperatures, and CPU frequency, alongside the existing tables. **Graphics** on the Info tab includes **GPU VRAM** (and shared/dynamic memory when the driver reports it) when NVIDIA or AMD tools are available.
 
 ## Requirements
 
@@ -42,23 +42,6 @@ sudo env PATH="$PATH" lhwmonitor
 # or
 sudo "$(command -v lhwmonitor)"
 ```
-
-## GitHub
-
-Create a new repository on GitHub, then:
-
-```bash
-git init
-git add .
-git commit -m "Initial release v0.1.0"
-git branch -M main
-git tag -a v0.1.0 -m "v0.1.0 — first public release"
-git remote add origin https://github.com/YOUR_USER/lhwmonitor.git
-git push -u origin main
-git push origin v0.1.0
-```
-
-On the GitHub repo page, under **About → Topics**, you can add tags for discoverability, for example: `linux`, `python`, `pyside6`, `qt`, `hardware-monitoring`, `system-monitor`, `lm-sensors`, `sensors`.
 
 ## License
 
