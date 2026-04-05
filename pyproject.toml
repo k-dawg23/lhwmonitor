@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lhwmonitor"
+version = "0.1.0"
+description = "Linux hardware info and live sensor monitor (CPU-Z / HWMonitor style)"
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = [
+    "linux",
+    "hardware",
+    "monitoring",
+    "sensors",
+    "lm-sensors",
+    "cpu",
+    "qt",
+    "pyside6",
+]
+classifiers = [
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Hardware",
+    "Topic :: System :: Monitoring",
+]
+dependencies = [
+    "PySide6>=6.6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+lhwmonitor = "lhwmonitor.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
