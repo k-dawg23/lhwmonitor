@@ -6,8 +6,10 @@ from datetime import datetime
 from typing import Any
 
 from PySide6.QtCore import QRunnable, QThreadPool, QTimer, Qt, Signal, QObject
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -27,9 +29,19 @@ from PySide6.QtWidgets import (
 
 from lhwmonitor import __version__
 from lhwmonitor.data.info_bundle import collect_info_bundle
-from lhwmonitor.data.memory import format_kb_gib
 from lhwmonitor.data.monitor_snapshot import collect_monitor_snapshot
 from lhwmonitor.data.proc_stat import CpuUsageSampler
+from lhwmonitor.export_log import write_snapshot_csv, write_snapshot_json
+from lhwmonitor.info_flatten import flatten_info
+from lhwmonitor.monitor_rows import (
+    build_monitor_rows,
+    cpu_pad_width_from_sys_cpu_names,
+    cpu_pad_width_from_usage_keys,
+    cpu_usage_sort_key,
+    cpufreq_entry_sort_key,
+    label_cpu_usage,
+    label_freq_cpu,
+)
 from lhwmonitor.ui.monitor_trend_chart import RollingTrendChart
 
 
@@ -88,72 +100,6 @@ class _CollapsibleSection(QWidget):
         return self._body_layout
 
 
-def _flatten_info(obj: Any, prefix: str = "") -> list[tuple[str, str]]:
-    rows: list[tuple[str, str]] = []
-    if isinstance(obj, dict):
-        for k in sorted(obj.keys(), key=str):
-            p = f"{prefix}{k}" if not prefix else f"{prefix} / {k}"
-            rows.extend(_flatten_info(obj[k], p))
-    elif isinstance(obj, list):
-        for i, item in enumerate(obj):
-            rows.extend(_flatten_info(item, f"{prefix}[{i}]"))
-    else:
-        rows.append((prefix or "value", str(obj)))
-    return rows
-
-
-def _cpu_usage_sort_key(name: str) -> tuple[int, int, str]:
-    """Aggregate `cpu` first, then cpu0, cpu1, … by numeric index."""
-    if name == "cpu":
-        return (-1, 0, "")
-    if name.startswith("cpu") and name[3:].isdigit():
-        return (0, int(name[3:]), name)
-    return (1, 0, name)
-
-
-def _cpu_pad_width_from_indices(indices: list[int]) -> int:
-    if not indices:
-        return 2
-    return max(2, len(str(max(indices))))
-
-
-def _cpu_pad_width_from_usage_keys(keys: list[str]) -> int:
-    idx: list[int] = []
-    for k in keys:
-        if k.startswith("cpu") and k[3:].isdigit():
-            idx.append(int(k[3:]))
-    return _cpu_pad_width_from_indices(idx)
-
-
-def _cpu_pad_width_from_sys_cpu_names(names: list[str]) -> int:
-    idx: list[int] = []
-    for n in names:
-        if n.startswith("cpu") and len(n) > 3 and n[3:].isdigit():
-            idx.append(int(n[3:]))
-    return _cpu_pad_width_from_indices(idx)
-
-
-def _label_cpu_usage(name: str, width: int) -> str:
-    if name == "cpu":
-        return "cpu"
-    if name.startswith("cpu") and name[3:].isdigit():
-        return f"cpu{int(name[3:]):0{width}d}"
-    return name
-
-
-def _label_freq_cpu(cpu_name: str, width: int) -> str:
-    if cpu_name.startswith("cpu") and len(cpu_name) > 3 and cpu_name[3:].isdigit():
-        return f"cpu{int(cpu_name[3:]):0{width}d}"
-    return cpu_name
-
-
-def _cpufreq_entry_sort_key(entry: dict[str, Any]) -> tuple[int, str]:
-    c = entry.get("cpu", "")
-    if isinstance(c, str) and c.startswith("cpu") and c[3:].isdigit():
-        return (int(c[3:]), c)
-    return (10**9, str(c))
-
-
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -188,6 +134,46 @@ class MainWindow(QMainWindow):
         self._reload_info()
         self._request_monitor_fetch()
         self._timer.start()
+        self._setup_file_menu()
+
+    def _setup_file_menu(self) -> None:
+        save_act = QAction("Save snapshot…", self)
+        save_act.setShortcut("Ctrl+S")
+        save_act.setStatusTip("Save current Info + Monitor data as JSON or CSV")
+        save_act.triggered.connect(self._save_snapshot)
+        file_menu = self.menuBar().addMenu("&File")
+        file_menu.addAction(save_act)
+
+    def _save_snapshot(self) -> None:
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save snapshot",
+            "",
+            "JSON (*.json);;CSV (*.csv)",
+        )
+        if not path:
+            return
+        low = path.lower()
+        if not low.endswith(".json") and not low.endswith(".csv"):
+            if "CSV" in selected_filter.upper():
+                path += ".csv"
+            else:
+                path += ".json"
+        try:
+            info = collect_info_bundle()
+            monitor = collect_monitor_snapshot(self._sampler)
+        except Exception as e:
+            QMessageBox.warning(self, "Save failed", str(e))
+            return
+        try:
+            if path.lower().endswith(".csv"):
+                write_snapshot_csv(path, info, monitor, __version__)
+            else:
+                write_snapshot_json(path, info, monitor, __version__)
+        except OSError as e:
+            QMessageBox.warning(self, "Save failed", str(e))
+            return
+        self._status.setText(f"Saved: {path}")
 
     def _make_info_tab(self) -> QWidget:
         outer = QWidget()
@@ -235,7 +221,7 @@ class MainWindow(QMainWindow):
             inner = QWidget()
             form = QFormLayout(inner)
             section = bundle.get(key, {})
-            pairs = _flatten_info(section)
+            pairs = flatten_info(section)
             if not pairs:
                 form.addRow(QLabel("(no data)"))
             else:
@@ -338,107 +324,21 @@ class MainWindow(QMainWindow):
         self._fill_monitor_tables(data)
 
     def _fill_monitor_tables(self, data: dict[str, Any]) -> None:
-        load_rows: list[tuple[str, str]] = []
-        memory_rows: list[tuple[str, str]] = []
-        cpu_rows: list[tuple[str, str]] = []
-        thermal_rows: list[tuple[str, str]] = []
-        sensor_rows: list[tuple[str, str]] = []
-        freq_rows: list[tuple[str, str]] = []
+        rows = build_monitor_rows(data)
 
-        la = data.get("loadavg") or ""
-        if la:
-            parts = la.split()
-            if len(parts) >= 3:
-                load_rows.append(("1 min", parts[0]))
-                load_rows.append(("5 min", parts[1]))
-                load_rows.append(("15 min", parts[2]))
-
-        ram = data.get("ram") or {}
-        if ram.get("mem_total_kb") is not None:
-            memory_rows.append(("RAM total", format_kb_gib(ram["mem_total_kb"])))
-        if ram.get("mem_available_kb") is not None:
-            memory_rows.append(("RAM available", format_kb_gib(ram["mem_available_kb"])))
-        if ram.get("mem_used_kb") is not None:
-            memory_rows.append(("RAM used (est.)", format_kb_gib(ram["mem_used_kb"])))
-        if ram.get("mem_used_percent") is not None:
-            memory_rows.append(("RAM used %", f"{ram['mem_used_percent']:.1f}%"))
-        st = ram.get("swap_total_kb")
-        if st is not None and st > 0:
-            memory_rows.append(("Swap total", format_kb_gib(st)))
-            if ram.get("swap_used_kb") is not None:
-                memory_rows.append(("Swap used", format_kb_gib(ram["swap_used_kb"])))
-            if ram.get("swap_used_percent") is not None:
-                memory_rows.append(("Swap used %", f"{ram['swap_used_percent']:.1f}%"))
-
-        for g in data.get("gpu_memory") or []:
-            src = str(g.get("source", ""))
-            idx = str(g.get("gpu_index", ""))
-            name = str(g.get("name", ""))[:48]
-            label = f"GPU {idx} ({src})"
-            if name:
-                label = f"{label} {name}"
-            if g.get("dedicated_total_mib") is not None:
-                memory_rows.append((f"{label} VRAM total", f"{g['dedicated_total_mib']:.0f} MiB"))
-            if g.get("dedicated_used_mib") is not None:
-                memory_rows.append((f"{label} VRAM used", f"{g['dedicated_used_mib']:.0f} MiB"))
-            if g.get("dedicated_free_mib") is not None:
-                memory_rows.append((f"{label} VRAM free", f"{g['dedicated_free_mib']:.0f} MiB"))
-            if g.get("dedicated_used_percent") is not None:
-                memory_rows.append((f"{label} VRAM used %", f"{g['dedicated_used_percent']:.1f}%"))
-            if g.get("dynamic_used_mib") is not None:
-                memory_rows.append((f"{label} dynamic (shared) used", f"{g['dynamic_used_mib']:.0f} MiB"))
-
-        if not memory_rows:
-            memory_rows.append(("(no data)", "—"))
-
-        usage = data.get("cpu_usage")
-        if usage is None:
-            cpu_rows.append(("usage %", "(calibrating…)"))
-        else:
-            ukeys = list(usage.keys())
-            pad = _cpu_pad_width_from_usage_keys(ukeys)
-            for name in sorted(ukeys, key=_cpu_usage_sort_key):
-                cpu_rows.append((_label_cpu_usage(name, pad), f"{usage[name]:.1f}"))
-
-        for z in data.get("thermal_zones") or []:
-            zm = z.get("temp_millideg", "")
-            label = z.get("type") or z.get("zone", "")
-            temp = ""
-            if zm.isdigit():
-                temp = f"{int(zm) / 1000.0:.1f} °C"
-            thermal_rows.append((label or z.get("zone", ""), temp or zm))
-
-        for s in data.get("sensors") or []:
-            chip = s.get("chip", "")
-            lab = s.get("label", "")
-            val = s.get("value", "")
-            unit = s.get("unit", "")
-            v = val + (f" {unit}" if unit else "")
-            sensor_rows.append((f"{chip} — {lab}", v))
-
-        freq_list = sorted(data.get("cpufreq") or [], key=_cpufreq_entry_sort_key)
-        fcpus = [str(f.get("cpu", "")) for f in freq_list]
-        fpad = _cpu_pad_width_from_sys_cpu_names(fcpus)
-        for f in freq_list:
-            cpu = f.get("cpu", "")
-            mhz = f.get("mhz", "")
-            gov = f.get("governor", "")
-            extra = f" ({gov})" if gov else ""
-            label = _label_freq_cpu(str(cpu), fpad) if cpu else ""
-            freq_rows.append((label, (mhz + " MHz" if mhz else "") + extra))
-
-        def _fill(table: QTableWidget, rows: list[tuple[str, str]]) -> None:
-            table.setRowCount(len(rows))
-            for i, (a, b) in enumerate(rows):
+        def _fill(table: QTableWidget, key: str) -> None:
+            r = rows[key]
+            table.setRowCount(len(r))
+            for i, (a, b) in enumerate(r):
                 table.setItem(i, 0, QTableWidgetItem(a))
                 table.setItem(i, 1, QTableWidgetItem(b))
 
-        _fill(self._monitor_tables["Load"], load_rows)
-        _fill(self._monitor_tables["Memory"], memory_rows)
-        _fill(self._monitor_tables["CPU"], cpu_rows)
-        _fill(self._monitor_tables["Thermal"], thermal_rows)
-        _fill(self._monitor_tables["Sensors"], sensor_rows)
-        _fill(self._monitor_tables["Frequency"], freq_rows)
+        _fill(self._monitor_tables["Load"], "Load")
+        _fill(self._monitor_tables["Memory"], "Memory")
+        _fill(self._monitor_tables["CPU"], "CPU")
+        _fill(self._monitor_tables["Thermal"], "Thermal")
+        _fill(self._monitor_tables["Sensors"], "Sensors")
+        _fill(self._monitor_tables["Frequency"], "Frequency")
 
         self._update_monitor_charts(data)
 
@@ -471,11 +371,11 @@ class MainWindow(QMainWindow):
         cpu_samples: dict[str, float | None] = {}
         if usage is not None:
             ukeys = list(usage.keys())
-            pad_u = _cpu_pad_width_from_usage_keys(ukeys)
-            for i, name in enumerate(sorted(ukeys, key=_cpu_usage_sort_key)):
+            pad_u = cpu_pad_width_from_usage_keys(ukeys)
+            for i, name in enumerate(sorted(ukeys, key=cpu_usage_sort_key)):
                 if i >= 16:
                     break
-                cpu_samples[_label_cpu_usage(name, pad_u)] = float(usage[name])
+                cpu_samples[label_cpu_usage(name, pad_u)] = float(usage[name])
         self._monitor_charts["CPU"].record_tick(cpu_samples)
 
         thermal_samples: dict[str, float | None] = {}
@@ -509,7 +409,7 @@ class MainWindow(QMainWindow):
         self._monitor_charts["Sensors"].record_tick(sensor_samples)
 
         freq_samples: dict[str, float | None] = {}
-        freqs = sorted(data.get("cpufreq") or [], key=_cpufreq_entry_sort_key)
+        freqs = sorted(data.get("cpufreq") or [], key=cpufreq_entry_sort_key)
         mhz_list: list[float] = []
         for f in freqs:
             mhz = f.get("mhz", "")
@@ -517,12 +417,12 @@ class MainWindow(QMainWindow):
                 mhz_list.append(float(mhz))
         if mhz_list:
             freq_samples["average"] = sum(mhz_list) / len(mhz_list)
-        fpad = _cpu_pad_width_from_sys_cpu_names([str(f.get("cpu", "")) for f in freqs])
+        fpad = cpu_pad_width_from_sys_cpu_names([str(f.get("cpu", "")) for f in freqs])
         for i, f in enumerate(freqs[:8]):
             cpu = f.get("cpu", "")
             mhz = f.get("mhz", "")
             if cpu and mhz.isdigit():
-                label = _label_freq_cpu(str(cpu), fpad)
+                label = label_freq_cpu(str(cpu), fpad)
                 freq_samples[label] = float(mhz)
         self._monitor_charts["Frequency"].record_tick(freq_samples)
 
