@@ -29,6 +29,7 @@ from lhwmonitor import __version__
 from lhwmonitor.data.info_bundle import collect_info_bundle
 from lhwmonitor.data.monitor_snapshot import collect_monitor_snapshot
 from lhwmonitor.data.proc_stat import CpuUsageSampler
+from lhwmonitor.ui.monitor_trend_chart import RollingTrendChart
 
 
 class _MonitorBridge(QObject):
@@ -100,6 +101,58 @@ def _flatten_info(obj: Any, prefix: str = "") -> list[tuple[str, str]]:
     return rows
 
 
+def _cpu_usage_sort_key(name: str) -> tuple[int, int, str]:
+    """Aggregate `cpu` first, then cpu0, cpu1, … by numeric index."""
+    if name == "cpu":
+        return (-1, 0, "")
+    if name.startswith("cpu") and name[3:].isdigit():
+        return (0, int(name[3:]), name)
+    return (1, 0, name)
+
+
+def _cpu_pad_width_from_indices(indices: list[int]) -> int:
+    if not indices:
+        return 2
+    return max(2, len(str(max(indices))))
+
+
+def _cpu_pad_width_from_usage_keys(keys: list[str]) -> int:
+    idx: list[int] = []
+    for k in keys:
+        if k.startswith("cpu") and k[3:].isdigit():
+            idx.append(int(k[3:]))
+    return _cpu_pad_width_from_indices(idx)
+
+
+def _cpu_pad_width_from_sys_cpu_names(names: list[str]) -> int:
+    idx: list[int] = []
+    for n in names:
+        if n.startswith("cpu") and len(n) > 3 and n[3:].isdigit():
+            idx.append(int(n[3:]))
+    return _cpu_pad_width_from_indices(idx)
+
+
+def _label_cpu_usage(name: str, width: int) -> str:
+    if name == "cpu":
+        return "cpu"
+    if name.startswith("cpu") and name[3:].isdigit():
+        return f"cpu{int(name[3:]):0{width}d}"
+    return name
+
+
+def _label_freq_cpu(cpu_name: str, width: int) -> str:
+    if cpu_name.startswith("cpu") and len(cpu_name) > 3 and cpu_name[3:].isdigit():
+        return f"cpu{int(cpu_name[3:]):0{width}d}"
+    return cpu_name
+
+
+def _cpufreq_entry_sort_key(entry: dict[str, Any]) -> tuple[int, str]:
+    c = entry.get("cpu", "")
+    if isinstance(c, str) and c.startswith("cpu") and c[3:].isdigit():
+        return (int(c[3:]), c)
+    return (10**9, str(c))
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -113,6 +166,7 @@ class MainWindow(QMainWindow):
 
         self._info_root: QWidget | None = None
         self._monitor_tables: dict[str, QTableWidget] = {}
+        self._monitor_charts: dict[str, RollingTrendChart] = {}
         self._monitor_note: QLabel | None = None
         self._paused = False
 
@@ -222,6 +276,13 @@ class MainWindow(QMainWindow):
         vbox = QVBoxLayout(container)
         vbox.setContentsMargins(0, 0, 0, 0)
 
+        chart_titles = {
+            "Load": ("Load average", "Load"),
+            "CPU": ("CPU usage", "%"),
+            "Thermal": ("Thermal zones", "°C"),
+            "Sensors": ("Temperature sensors (°C)", "°C"),
+            "Frequency": ("CPU frequency", "MHz"),
+        }
         for cat in ("Load", "CPU", "Thermal", "Sensors", "Frequency"):
             sec = _CollapsibleSection(cat)
             table = QTableWidget(0, 2)
@@ -229,8 +290,12 @@ class MainWindow(QMainWindow):
             table.horizontalHeader().setStretchLastSection(True)
             table.setMinimumHeight(80)
             sec.body_layout().addWidget(table)
+            ctitle, ylabel = chart_titles[cat]
+            chart = RollingTrendChart(ctitle, ylabel, max_points=180)
+            sec.body_layout().addWidget(chart)
             vbox.addWidget(sec)
             self._monitor_tables[cat] = table
+            self._monitor_charts[cat] = chart
 
         vbox.addStretch()
         scroll.setWidget(container)
@@ -262,6 +327,8 @@ class MainWindow(QMainWindow):
                 self._monitor_note.setText(data["error"])
             for t in self._monitor_tables.values():
                 t.setRowCount(0)
+            for c in self._monitor_charts.values():
+                c.reset()
             return
         if self._monitor_note:
             note = data.get("sensors_note") or ""
@@ -287,8 +354,10 @@ class MainWindow(QMainWindow):
         if usage is None:
             cpu_rows.append(("usage %", "(calibrating…)"))
         else:
-            for name in sorted(usage.keys(), key=lambda x: (x != "cpu", x)):
-                cpu_rows.append((name, f"{usage[name]:.1f}"))
+            ukeys = list(usage.keys())
+            pad = _cpu_pad_width_from_usage_keys(ukeys)
+            for name in sorted(ukeys, key=_cpu_usage_sort_key):
+                cpu_rows.append((_label_cpu_usage(name, pad), f"{usage[name]:.1f}"))
 
         for z in data.get("thermal_zones") or []:
             zm = z.get("temp_millideg", "")
@@ -306,12 +375,16 @@ class MainWindow(QMainWindow):
             v = val + (f" {unit}" if unit else "")
             sensor_rows.append((f"{chip} — {lab}", v))
 
-        for f in data.get("cpufreq") or []:
+        freq_list = sorted(data.get("cpufreq") or [], key=_cpufreq_entry_sort_key)
+        fcpus = [str(f.get("cpu", "")) for f in freq_list]
+        fpad = _cpu_pad_width_from_sys_cpu_names(fcpus)
+        for f in freq_list:
             cpu = f.get("cpu", "")
             mhz = f.get("mhz", "")
             gov = f.get("governor", "")
             extra = f" ({gov})" if gov else ""
-            freq_rows.append((cpu, (mhz + " MHz" if mhz else "") + extra))
+            label = _label_freq_cpu(str(cpu), fpad) if cpu else ""
+            freq_rows.append((label, (mhz + " MHz" if mhz else "") + extra))
 
         def _fill(table: QTableWidget, rows: list[tuple[str, str]]) -> None:
             table.setRowCount(len(rows))
@@ -324,6 +397,78 @@ class MainWindow(QMainWindow):
         _fill(self._monitor_tables["Thermal"], thermal_rows)
         _fill(self._monitor_tables["Sensors"], sensor_rows)
         _fill(self._monitor_tables["Frequency"], freq_rows)
+
+        self._update_monitor_charts(data)
+
+    def _update_monitor_charts(self, data: dict[str, Any]) -> None:
+        la = data.get("loadavg") or ""
+        load_samples: dict[str, float | None] = {}
+        if la:
+            parts = la.split()
+            if len(parts) >= 3:
+                load_samples["1 min"] = float(parts[0])
+                load_samples["5 min"] = float(parts[1])
+                load_samples["15 min"] = float(parts[2])
+        self._monitor_charts["Load"].record_tick(load_samples)
+
+        usage = data.get("cpu_usage")
+        cpu_samples: dict[str, float | None] = {}
+        if usage is not None:
+            ukeys = list(usage.keys())
+            pad_u = _cpu_pad_width_from_usage_keys(ukeys)
+            for i, name in enumerate(sorted(ukeys, key=_cpu_usage_sort_key)):
+                if i >= 16:
+                    break
+                cpu_samples[_label_cpu_usage(name, pad_u)] = float(usage[name])
+        self._monitor_charts["CPU"].record_tick(cpu_samples)
+
+        thermal_samples: dict[str, float | None] = {}
+        for i, z in enumerate(data.get("thermal_zones") or []):
+            if i >= 8:
+                break
+            zm = z.get("temp_millideg", "")
+            label = (z.get("type") or z.get("zone") or f"zone{i}")[:32]
+            if zm.isdigit():
+                thermal_samples[label] = int(zm) / 1000.0
+        self._monitor_charts["Thermal"].record_tick(thermal_samples)
+
+        sensor_samples: dict[str, float | None] = {}
+        for s in data.get("sensors") or []:
+            if len(sensor_samples) >= 8:
+                break
+            unit = (s.get("unit") or "").lower()
+            lab = (s.get("label") or "").lower()
+            if "°c" not in unit and "temp" not in lab and "°c" not in lab:
+                continue
+            raw = str(s.get("value", "")).strip().split()
+            if not raw:
+                continue
+            try:
+                v = float(raw[0])
+            except ValueError:
+                continue
+            chip = (s.get("chip") or "chip")[:14]
+            name = f"{chip}:{(s.get('label') or '?')[:22]}"
+            sensor_samples[name] = v
+        self._monitor_charts["Sensors"].record_tick(sensor_samples)
+
+        freq_samples: dict[str, float | None] = {}
+        freqs = sorted(data.get("cpufreq") or [], key=_cpufreq_entry_sort_key)
+        mhz_list: list[float] = []
+        for f in freqs:
+            mhz = f.get("mhz", "")
+            if mhz.isdigit():
+                mhz_list.append(float(mhz))
+        if mhz_list:
+            freq_samples["average"] = sum(mhz_list) / len(mhz_list)
+        fpad = _cpu_pad_width_from_sys_cpu_names([str(f.get("cpu", "")) for f in freqs])
+        for i, f in enumerate(freqs[:8]):
+            cpu = f.get("cpu", "")
+            mhz = f.get("mhz", "")
+            if cpu and mhz.isdigit():
+                label = _label_freq_cpu(str(cpu), fpad)
+                freq_samples[label] = float(mhz)
+        self._monitor_charts["Frequency"].record_tick(freq_samples)
 
     def closeEvent(self, event) -> None:
         self._timer.stop()

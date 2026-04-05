@@ -2,9 +2,9 @@
 
 Hardware Information and Monitor Tool for Linux
 
-**Version: v0.1.1**
+**Version: v0.2.0**
 
-Linux-only desktop app with an **Info** tab (static hardware identification, CPU-Z–style) and a **Monitor** tab (live sensors and usage, HWMonitor–style).
+Linux-only desktop app with an **Info** tab (static hardware identification, CPU-Z–style) and a **Monitor** tab (live sensors and usage, HWMonitor–style). The Monitor tab includes **rolling line charts** (Qt Charts) for load, CPU usage, temperatures, selected sensor temperatures, and CPU frequency, alongside the existing tables.
 
 ## Requirements
 
