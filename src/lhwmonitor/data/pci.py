@@ -41,7 +41,10 @@ def nvidia_smi_brief() -> dict[str, str] | None:
 
 
 def collect_graphics_info() -> dict[str, Any]:
+    from lhwmonitor.data.gpu_mem import collect_gpu_memory_for_info
+
     return {
         "lspci": lspci_vga(),
         "nvidia_smi": nvidia_smi_brief(),
+        "gpu_memory": collect_gpu_memory_for_info(),
     }

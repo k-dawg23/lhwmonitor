@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from lhwmonitor import __version__
 from lhwmonitor.data.info_bundle import collect_info_bundle
+from lhwmonitor.data.memory import format_kb_gib
 from lhwmonitor.data.monitor_snapshot import collect_monitor_snapshot
 from lhwmonitor.data.proc_stat import CpuUsageSampler
 from lhwmonitor.ui.monitor_trend_chart import RollingTrendChart
@@ -278,12 +279,13 @@ class MainWindow(QMainWindow):
 
         chart_titles = {
             "Load": ("Load average", "Load"),
+            "Memory": ("Memory utilization", "%"),
             "CPU": ("CPU usage", "%"),
             "Thermal": ("Thermal zones", "°C"),
             "Sensors": ("Temperature sensors (°C)", "°C"),
             "Frequency": ("CPU frequency", "MHz"),
         }
-        for cat in ("Load", "CPU", "Thermal", "Sensors", "Frequency"):
+        for cat in ("Load", "Memory", "CPU", "Thermal", "Sensors", "Frequency"):
             sec = _CollapsibleSection(cat)
             table = QTableWidget(0, 2)
             table.setHorizontalHeaderLabels(["Item", "Value"])
@@ -337,6 +339,7 @@ class MainWindow(QMainWindow):
 
     def _fill_monitor_tables(self, data: dict[str, Any]) -> None:
         load_rows: list[tuple[str, str]] = []
+        memory_rows: list[tuple[str, str]] = []
         cpu_rows: list[tuple[str, str]] = []
         thermal_rows: list[tuple[str, str]] = []
         sensor_rows: list[tuple[str, str]] = []
@@ -349,6 +352,44 @@ class MainWindow(QMainWindow):
                 load_rows.append(("1 min", parts[0]))
                 load_rows.append(("5 min", parts[1]))
                 load_rows.append(("15 min", parts[2]))
+
+        ram = data.get("ram") or {}
+        if ram.get("mem_total_kb") is not None:
+            memory_rows.append(("RAM total", format_kb_gib(ram["mem_total_kb"])))
+        if ram.get("mem_available_kb") is not None:
+            memory_rows.append(("RAM available", format_kb_gib(ram["mem_available_kb"])))
+        if ram.get("mem_used_kb") is not None:
+            memory_rows.append(("RAM used (est.)", format_kb_gib(ram["mem_used_kb"])))
+        if ram.get("mem_used_percent") is not None:
+            memory_rows.append(("RAM used %", f"{ram['mem_used_percent']:.1f}%"))
+        st = ram.get("swap_total_kb")
+        if st is not None and st > 0:
+            memory_rows.append(("Swap total", format_kb_gib(st)))
+            if ram.get("swap_used_kb") is not None:
+                memory_rows.append(("Swap used", format_kb_gib(ram["swap_used_kb"])))
+            if ram.get("swap_used_percent") is not None:
+                memory_rows.append(("Swap used %", f"{ram['swap_used_percent']:.1f}%"))
+
+        for g in data.get("gpu_memory") or []:
+            src = str(g.get("source", ""))
+            idx = str(g.get("gpu_index", ""))
+            name = str(g.get("name", ""))[:48]
+            label = f"GPU {idx} ({src})"
+            if name:
+                label = f"{label} {name}"
+            if g.get("dedicated_total_mib") is not None:
+                memory_rows.append((f"{label} VRAM total", f"{g['dedicated_total_mib']:.0f} MiB"))
+            if g.get("dedicated_used_mib") is not None:
+                memory_rows.append((f"{label} VRAM used", f"{g['dedicated_used_mib']:.0f} MiB"))
+            if g.get("dedicated_free_mib") is not None:
+                memory_rows.append((f"{label} VRAM free", f"{g['dedicated_free_mib']:.0f} MiB"))
+            if g.get("dedicated_used_percent") is not None:
+                memory_rows.append((f"{label} VRAM used %", f"{g['dedicated_used_percent']:.1f}%"))
+            if g.get("dynamic_used_mib") is not None:
+                memory_rows.append((f"{label} dynamic (shared) used", f"{g['dynamic_used_mib']:.0f} MiB"))
+
+        if not memory_rows:
+            memory_rows.append(("(no data)", "—"))
 
         usage = data.get("cpu_usage")
         if usage is None:
@@ -393,6 +434,7 @@ class MainWindow(QMainWindow):
                 table.setItem(i, 1, QTableWidgetItem(b))
 
         _fill(self._monitor_tables["Load"], load_rows)
+        _fill(self._monitor_tables["Memory"], memory_rows)
         _fill(self._monitor_tables["CPU"], cpu_rows)
         _fill(self._monitor_tables["Thermal"], thermal_rows)
         _fill(self._monitor_tables["Sensors"], sensor_rows)
@@ -410,6 +452,20 @@ class MainWindow(QMainWindow):
                 load_samples["5 min"] = float(parts[1])
                 load_samples["15 min"] = float(parts[2])
         self._monitor_charts["Load"].record_tick(load_samples)
+
+        ram = data.get("ram") or {}
+        mem_samples: dict[str, float | None] = {}
+        if ram.get("mem_used_percent") is not None:
+            mem_samples["RAM %"] = float(ram["mem_used_percent"])
+        for i, g in enumerate(data.get("gpu_memory") or []):
+            if i >= 8:
+                break
+            pct = g.get("dedicated_used_percent")
+            idx = str(g.get("gpu_index", ""))
+            src = str(g.get("source", "?"))[:4]
+            if pct is not None:
+                mem_samples[f"GPU{idx} ({src}) VRAM %"] = float(pct)
+        self._monitor_charts["Memory"].record_tick(mem_samples)
 
         usage = data.get("cpu_usage")
         cpu_samples: dict[str, float | None] = {}
