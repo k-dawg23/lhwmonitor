@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import time
 from typing import Any
 
 
@@ -14,6 +15,22 @@ def _run(cmd: list[str], timeout: float = 8.0) -> tuple[int, str, str]:
         return p.returncode, p.stdout or "", p.stderr or ""
     except (OSError, subprocess.TimeoutExpired) as e:
         return -1, "", str(e)
+
+
+_TTL_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def _cached(name: str, ttl_s: float, producer) -> Any:
+    """Very small TTL cache for slow external commands in the monitor loop."""
+    now = time.monotonic()
+    hit = _TTL_CACHE.get(name)
+    if hit is not None:
+        ts, val = hit
+        if (now - ts) <= ttl_s:
+            return val
+    val = producer()
+    _TTL_CACHE[name] = (now, val)
+    return val
 
 
 def nvidia_smi_gpu_memory_rows() -> list[dict[str, Any]]:
@@ -143,4 +160,7 @@ def collect_gpu_memory_for_info() -> dict[str, Any]:
 
 def collect_gpu_memory_for_monitor() -> list[dict[str, Any]]:
     """Single refresh: combined list for Monitor tab (NVIDIA first, then AMD)."""
-    return nvidia_smi_gpu_memory_rows() + rocm_smi_gpu_memory_rows()
+    # NVIDIA is usually fast; ROCm can be slow on some systems. Cache both briefly.
+    nvidia = _cached("nvidia_smi_vram", 2.0, nvidia_smi_gpu_memory_rows)
+    amd = _cached("rocm_smi_vram", 5.0, rocm_smi_gpu_memory_rows)
+    return (nvidia or []) + (amd or [])

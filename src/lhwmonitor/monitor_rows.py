@@ -65,6 +65,9 @@ def build_monitor_rows(data: dict[str, Any]) -> dict[str, list[tuple[str, str]]]
     thermal_rows: list[tuple[str, str]] = []
     sensor_rows: list[tuple[str, str]] = []
     freq_rows: list[tuple[str, str]] = []
+    net_rows: list[tuple[str, str]] = []
+    bat_rows: list[tuple[str, str]] = []
+    disk_rows: list[tuple[str, str]] = []
 
     la = data.get("loadavg") or ""
     if la:
@@ -148,6 +151,65 @@ def build_monitor_rows(data: dict[str, Any]) -> dict[str, list[tuple[str, str]]]
         label = label_freq_cpu(str(cpu), fpad) if cpu else ""
         freq_rows.append((label, (mhz + " MHz" if mhz else "") + extra))
 
+    # Network
+    net = data.get("net") or {}
+    if isinstance(net, dict):
+        if net.get("note"):
+            net_rows.append(("Note", str(net["note"])))
+        ifaces = net.get("interfaces")
+        if isinstance(ifaces, list):
+            for r in ifaces:
+                if not isinstance(r, dict):
+                    continue
+                iface = str(r.get("iface", ""))
+                rx = float(r.get("rx_bytes_per_s", 0.0))
+                tx = float(r.get("tx_bytes_per_s", 0.0))
+                net_rows.append((f"{iface} RX", f"{rx/1024.0:.1f} KiB/s"))
+                net_rows.append((f"{iface} TX", f"{tx/1024.0:.1f} KiB/s"))
+    if not net_rows:
+        net_rows.append(("(no data)", "—"))
+
+    # Battery / power
+    power = data.get("power") or {}
+    if isinstance(power, dict):
+        if power.get("note"):
+            bat_rows.append(("Note", str(power["note"])))
+        bats = power.get("batteries")
+        if isinstance(bats, list):
+            for b in bats:
+                if not isinstance(b, dict):
+                    continue
+                name = str(b.get("name", "BAT"))
+                cap = b.get("capacity_percent")
+                status = b.get("status") or ""
+                if cap is not None:
+                    bat_rows.append((f"{name} capacity", f"{int(cap)}%"))
+                if status:
+                    bat_rows.append((f"{name} status", str(status)))
+    if not bat_rows:
+        bat_rows.append(("(no data)", "—"))
+
+    # Disk SMART (opt-in)
+    smart = data.get("smart") or {}
+    if isinstance(smart, dict):
+        if smart.get("note"):
+            disk_rows.append(("Note", str(smart["note"])))
+        devs = smart.get("devices")
+        if isinstance(devs, list):
+            for d in devs:
+                if not isinstance(d, dict):
+                    continue
+                dev = str(d.get("device", ""))
+                if d.get("error"):
+                    disk_rows.append((dev, f"error: {d['error']}"))
+                    continue
+                if d.get("health"):
+                    disk_rows.append((f"{dev} health", str(d.get("health"))))
+                if d.get("temp_c") is not None:
+                    disk_rows.append((f"{dev} temp", f"{int(d['temp_c'])} °C"))
+    if not disk_rows:
+        disk_rows.append(("(no data)", "—"))
+
     return {
         "Load": load_rows,
         "Memory": memory_rows,
@@ -155,4 +217,7 @@ def build_monitor_rows(data: dict[str, Any]) -> dict[str, list[tuple[str, str]]]
         "Thermal": thermal_rows,
         "Sensors": sensor_rows,
         "Frequency": freq_rows,
+        "Network": net_rows,
+        "Battery": bat_rows,
+        "Disks": disk_rows,
     }

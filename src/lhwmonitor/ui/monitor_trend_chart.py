@@ -38,6 +38,7 @@ class RollingTrendChart(QWidget):
         self._points: dict[str, deque[tuple[float, float]]] = {}
         self._series: dict[str, QLineSeries] = {}
         self._color_idx = 0
+        self._fixed_y: tuple[float, float] | None = None
 
         self._chart = QChart()
         self._chart.setTitle(title)
@@ -113,13 +114,24 @@ class RollingTrendChart(QWidget):
         if xmin == xmax:
             xmin -= 0.5
             xmax += 0.5
+        self._axis_x.setRange(xmin, xmax)
+        if self._fixed_y is not None:
+            self._axis_y.setRange(self._fixed_y[0], self._fixed_y[1])
+            return
         ymin, ymax = min(all_y), max(all_y)
         if ymin == ymax:
             ymin -= 0.5
             ymax += 0.5
         pad_y = (ymax - ymin) * 0.08 + 1e-6
-        self._axis_x.setRange(xmin, xmax)
         self._axis_y.setRange(ymin - pad_y, ymax + pad_y)
+
+    def set_fixed_y_range(self, ymin: float, ymax: float) -> None:
+        self._fixed_y = (float(ymin), float(ymax))
+        self._redraw()
+
+    def set_auto_y_range(self) -> None:
+        self._fixed_y = None
+        self._redraw()
 
     def reset(self) -> None:
         """Clear history (e.g. after error or pause resume)."""
