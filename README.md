@@ -2,7 +2,7 @@
 
 Hardware Information and Monitor Tool for Linux
 
-**Version: v0.2.2**
+**Version: v0.2.3**
 
 Linux-only desktop app with an **Info** tab (static hardware identification, CPU-Z–style) and a **Monitor** tab (live sensors and usage, HWMonitor–style). The Monitor tab includes **rolling line charts** (Qt Charts) for load, system/GPU memory use, CPU usage, temperatures, selected sensor temperatures, and CPU frequency, alongside the existing tables. **Graphics** on the Info tab includes **GPU VRAM** (and shared/dynamic memory when the driver reports it) when NVIDIA or AMD tools are available.
 
@@ -22,7 +22,15 @@ Captured on Linux with the offscreen Qt platform (see [`scripts/capture_screensh
 
 ### Saving a snapshot (manual export)
 
-Use **File → Save snapshot…** (or **Ctrl+S**) to write the current **Info** bundle and **Monitor** snapshot to a file. Choose **JSON** for full structured data (good for scripts and archival) or **CSV** for spreadsheets (flattened rows with `Section`, `Item`, `Value`). This is a **manual** export only; **automatic / continuous logging** may be added in a future version.
+Use **File → Save snapshot…** (or **Ctrl+S**) to write the current **Info** bundle and **Monitor** snapshot to a file. Choose **JSON** for full structured data (good for scripts and archival), **CSV** for spreadsheets (flattened rows with `Section`, `Item`, `Value`), or **NDJSON** for tooling like `jq`/`pandas` (one JSON object per line). This is a **manual** export only; **automatic / continuous logging** may be added in a future version.
+
+### Alerts (thresholds)
+
+Use **File → Alerts…** to enable/disable alerts and configure thresholds for:
+
+- CPU temperature (best-effort using the first thermal zone)
+- RAM used %
+- GPU VRAM used %
 
 ## Requirements
 

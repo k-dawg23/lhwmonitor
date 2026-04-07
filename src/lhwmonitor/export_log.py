@@ -47,6 +47,18 @@ def write_snapshot_json(
     )
 
 
+def write_snapshot_ndjson(
+    path: str | Path,
+    info_bundle: dict[str, Any],
+    monitor_snapshot: dict[str, Any],
+    app_version: str,
+) -> None:
+    """Write one NDJSON record (single-line JSON object)."""
+    doc = build_snapshot_document(info_bundle, monitor_snapshot, app_version)
+    p = Path(path)
+    p.write_text(json.dumps(doc, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def write_snapshot_csv(
     path: str | Path,
     info_bundle: dict[str, Any],

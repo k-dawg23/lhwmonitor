@@ -66,14 +66,30 @@ This document summarizes major phases of development from the first prototype th
 - **File → Save snapshot…** (**Ctrl+S**): export current **Info** bundle + **Monitor** snapshot.
 - **JSON:** Full structured document (version, UTC timestamp, `info`, `monitor`) for scripting and archival.
 - **CSV:** Flattened rows (`Section`, `Item`, `Value`) for spreadsheets; includes meta rows and Info/Monitor sections.
+- **NDJSON:** One JSON object per line for tooling (`jq`, `pandas`), suitable as a “log-like” format without continuous recording.
 - **Refactor:** `export_log.py`, `info_flatten.py`, `monitor_rows.py` shared between UI tables and export.
 - **Explicitly deferred:** Automatic / continuous logging (called out in README for a future version).
 
 ---
 
+## Phase 6 — v0.2.3: UX polish, chart controls, and opt-in sources
+
+**Goals:** Reduce Info noise, improve Monitor usability, and broaden coverage with opt-in sources while keeping refresh fast.
+
+**Delivered:**
+
+- **Info tab:** curated summaries by default, with **Show raw details** toggles per section.
+- **Monitor charts:** range mode (Auto vs fixed 0–100 for % charts) and basic series limits (CPU/sensors/GPU) to reduce clutter.
+- **Performance:** guardrails to avoid overlapping refresh jobs; TTL caching for slower external calls in the monitor path.
+- **Hardware coverage (opt-in):** network throughput (`/proc/net/dev`), battery/power (`/sys/class/power_supply`), and SMART disk summaries (`smartctl`, disabled by default).
+- **Alerts:** thresholds are configurable via **File → Alerts…** (manual, non-continuous).
+- **Menu:** File → Quit added.
+
+---
+
 ## Current direction
 
-Future work may include scheduled or continuous logging, additional hardware sources (e.g. disk SMART), and further charting — driven by issues and releases after **v0.2.2**.
+Future work may include scheduled or continuous logging, additional hardware sources, and further charting — driven by issues and releases after **v0.2.3**.
 
 ---
 

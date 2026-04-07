@@ -6,8 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from lhwmonitor.data.cpufreq import read_cpu_mhz
+from lhwmonitor.data.disk_smart import collect_smart_snapshot
 from lhwmonitor.data.gpu_mem import collect_gpu_memory_for_monitor
 from lhwmonitor.data.memory import collect_system_ram_snapshot
+from lhwmonitor.data.net_dev import collect_net_rates_snapshot
+from lhwmonitor.data.power_supply import collect_power_supply_snapshot
 from lhwmonitor.data.proc_stat import CpuUsageSampler
 from lhwmonitor.data.sensors_live import collect_sensors_rows
 from lhwmonitor.data.thermal import read_thermal_zones
@@ -41,4 +44,7 @@ def collect_monitor_snapshot(sampler: CpuUsageSampler) -> dict[str, Any]:
         "cpufreq": freqs,
         "ram": collect_system_ram_snapshot(),
         "gpu_memory": collect_gpu_memory_for_monitor(),
+        "net": collect_net_rates_snapshot(),
+        "power": collect_power_supply_snapshot(),
+        "smart": collect_smart_snapshot(),
     }
